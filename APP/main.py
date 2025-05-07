@@ -7,6 +7,7 @@ from PIL import Image
 import io
 import base64
 import mimetypes
+from admin import AdminPage
 
 # API configuration
 API_BASE_URL = "http://localhost:8000"  # Adjust this to your API server URL
@@ -15,6 +16,7 @@ class Auth:
     def __init__(self):
         self.token = None
         self.username = None
+        self.is_admin = False
 
     def login(self, username: str, password: str) -> bool:
         try:
@@ -28,7 +30,8 @@ class Auth:
             if response.status_code == 200:
                 data = response.json()
                 self.token = data.get("access_token")
-                self.username = username
+                self.username = data.get("user", {}).get("username")
+                self.is_admin = data.get("user", {}).get("is_admin", False)
                 return True
             return False
         except requests.exceptions.RequestException:
@@ -58,8 +61,8 @@ def main(page: ft.Page):
     page.title = "Image Detection App"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 20
-    page.window_width = 800
-    page.window_height = 600
+    page.window_width = 1200  # Increased width for admin page
+    page.window_height = 800  # Increased height for admin page
     page.window_resizable = True
 
     # Initialize auth
@@ -71,16 +74,24 @@ def main(page: ft.Page):
     login_error = ft.Text("", color=ft.colors.RED)
     
     # Register page components
+    register_email = ft.TextField(label="Email", width=300)
     register_username = ft.TextField(label="Username", width=300)
     register_password = ft.TextField(label="Password", password=True, width=300)
     register_confirm_password = ft.TextField(label="Confirm Password", password=True, width=300)
     register_error = ft.Text("", color=ft.colors.RED)
 
     def login_click(e):
-        if auth.login(login_username.value, login_password.value):
-            page.go("/detection")
-        else:
-            login_error.value = "Invalid username or password"
+        try:
+            if auth.login(login_username.value, login_password.value):
+                if auth.is_admin:
+                    page.go("/admin")
+                else:
+                    page.go("/detection")
+            else:
+                login_error.value = "Invalid username or password"
+                page.update()
+        except Exception as ex:
+            login_error.value = f"Login error: {str(ex)}"
             page.update()
 
     def register_click(e):
@@ -96,6 +107,7 @@ def main(page: ft.Page):
     def logout_click(e):
         auth.token = None
         auth.username = None
+        auth.is_admin = False
         page.go("/login")
 
     # Login page
@@ -128,6 +140,7 @@ def main(page: ft.Page):
                 [
                     ft.Text("Register", size=32, weight=ft.FontWeight.BOLD),
                     ft.Divider(),
+                    register_email,
                     register_username,
                     register_password,
                     register_confirm_password,
@@ -177,10 +190,7 @@ def main(page: ft.Page):
                 
                 if response.status_code == 200:
                     results = response.json()
-                    
-                    # Display results
                     result_text.value = results.get('response', 'No response received')
-                
                 else:
                     result_text.value = f"Error: {response.status_code} - {response.text}"
                 
@@ -279,6 +289,10 @@ def main(page: ft.Page):
             page.views.append(login_page)
         elif e.route == "/register":
             page.views.append(register_page)
+        elif e.route == "/admin" and auth.is_admin:
+            # Create admin page
+            admin_page = AdminPage(page, auth.token)
+            page.views.append(admin_page)
         else:
             page.views.append(detection_page)
         page.update()

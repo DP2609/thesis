@@ -8,6 +8,7 @@ import os
 from typing import Tuple, List, Dict, Any
 
 class ImageDetector:
+    
     def __init__(self, model_path: str):
         """Initialize the detector with a model path."""
         print(f"Attempting to load model from: {model_path}")

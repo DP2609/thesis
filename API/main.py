@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile
+from fastapi import FastAPI, HTTPException, Depends, status, File, UploadFile, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from datetime import timedelta
 import google.generativeai as genai
 from dotenv import load_dotenv
 import os
+from typing import List
 
 import models
 import schemas
@@ -113,19 +114,31 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     return db_user
 
 @app.post("/token", response_model=schemas.Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    # Try to find user by email first
+    user = db.query(models.User).filter(models.User.email == form_data.username or models.User.username == form_data.username).first()
+    # If not found by email, try username
+    if not user:
+        user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = security.timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user
+    }
 
 @app.get("/users/me", response_model=schemas.User)
 async def read_users_me(current_user: models.User = Depends(security.get_current_user)):
@@ -260,6 +273,111 @@ async def detect_image(
 @app.get("/")
 async def root():
     return {"message": "Welcome to FastAPI with Gemini AI and User Management"}
+
+# Chat History Endpoints
+@app.post("/chat-history", response_model=schemas.ChatHistory)
+async def create_chat_history(
+    chat: schemas.ChatHistoryCreate,
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    db_chat = models.ChatHistory(
+        user_id=current_user.id,
+        message=chat.message,
+        response=chat.response,
+        image_path=chat.image_path
+    )
+    db.add(db_chat)
+    db.commit()
+    db.refresh(db_chat)
+    return db_chat
+
+@app.get("/chat-history", response_model=schemas.ChatHistoryList)
+async def get_chat_history(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    current_user: models.User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    total = db.query(models.ChatHistory).filter(models.ChatHistory.user_id == current_user.id).count()
+    chats = db.query(models.ChatHistory)\
+        .filter(models.ChatHistory.user_id == current_user.id)\
+        .order_by(models.ChatHistory.created_at.desc())\
+        .offset(skip)\
+        .limit(limit)\
+        .all()
+    return {"items": chats, "total": total}
+
+# User Management Endpoints (Admin only)
+@app.get("/admin/users", response_model=List[schemas.User])
+async def get_users(
+    skip: int = 0,
+    limit: int = 10,
+    search: str = "",
+    current_user: models.User = Depends(security.get_current_admin),
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.User)
+    if search:
+        query = query.filter(
+            (models.User.username.ilike(f"%{search}%")) |
+            (models.User.email.ilike(f"%{search}%"))
+        )
+    users = query.offset(skip).limit(limit).all()
+    return users
+
+@app.put("/admin/users/{user_id}", response_model=schemas.User)
+async def update_user(
+    user_id: int,
+    user_update: schemas.UserUpdate,
+    current_user: models.User = Depends(security.get_current_admin),
+    db: Session = Depends(get_db)
+):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    update_data = user_update.dict(exclude_unset=True)
+    if "password" in update_data:
+        update_data["hashed_password"] = security.get_password_hash(update_data.pop("password"))
+    
+    for key, value in update_data.items():
+        setattr(db_user, key, value)
+    
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.delete("/admin/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: models.User = Depends(security.get_current_admin),
+    db: Session = Depends(get_db)
+):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    db.delete(db_user)
+    db.commit()
+    return {"message": "User deleted successfully"}
+
+@app.get("/admin/chat-history", response_model=List[schemas.ChatHistory])
+async def get_all_chat_history(
+    skip: int = 0,
+    limit: int = 10,
+    search: str = "",
+    current_user: models.User = Depends(security.get_current_admin),
+    db: Session = Depends(get_db)
+):
+    query = db.query(models.ChatHistory)
+    if search:
+        query = query.filter(
+            (models.ChatHistory.message.ilike(f"%{search}%")) |
+            (models.ChatHistory.response.ilike(f"%{search}%"))
+        )
+    chat_history = query.offset(skip).limit(limit).all()
+    return chat_history
 
 if __name__ == "__main__":
     import uvicorn

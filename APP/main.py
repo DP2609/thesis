@@ -1,312 +1,75 @@
+# main.py
 import flet as ft
-import os
-import sys
-import requests
-import json
-from PIL import Image
-import io
-import base64
-import mimetypes
-from admin import AdminPage
-
-# API configuration
-API_BASE_URL = "http://localhost:8000"  # Adjust this to your API server URL
-
-class Auth:
-    def __init__(self):
-        self.token = None
-        self.username = None
-        self.is_admin = False
-
-    def login(self, username: str, password: str) -> bool:
-        try:
-            response = requests.post(
-                f"{API_BASE_URL}/token",
-                data={
-                    "username": username,
-                    "password": password
-                }
-            )
-            if response.status_code == 200:
-                data = response.json()
-                self.token = data.get("access_token")
-                self.username = data.get("user", {}).get("username")
-                self.is_admin = data.get("user", {}).get("is_admin", False)
-                return True
-            return False
-        except requests.exceptions.RequestException:
-            return False
-
-    def register(self, username: str, password: str) -> bool:
-        try:
-            response = requests.post(
-                f"{API_BASE_URL}/register",
-                json={
-                    "username": username,
-                    "password": password
-                }
-            )
-            return response.status_code == 200
-        except requests.exceptions.RequestException:
-            return False
-
-    def is_authenticated(self) -> bool:
-        return self.token is not None
-
-    def get_auth_header(self) -> dict:
-        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+from register_page import RegisterPage
+from login_page import LoginPage  # Import class
+from client_page import ClientPage  # Import class
+from admin_page import AdminPage  # Import class
 
 def main(page: ft.Page):
-    # Configure the page
-    page.title = "Image Detection App"
-    page.theme_mode = ft.ThemeMode.LIGHT
-    page.padding = 20
-    page.window_width = 1200  # Increased width for admin page
-    page.window_height = 800  # Increased height for admin page
-    page.window_resizable = True
+    page.title = "Ứng dụng Flet Đa Trang (Class)"
+    # Các cài đặt alignment toàn cục cho page có thể không cần thiết
+    # nếu mỗi View tự quản lý alignment của nó.
+    # page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    # page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
-    # Initialize auth
-    auth = Auth()
+    # Ánh xạ route tới các Class View tương ứng
+    app_routes = {
+        "/login": LoginPage,  # Trỏ tới class, không phải instance
+        "/client": ClientPage,
+        "/admin": AdminPage,
+        "/register": RegisterPage,  # Chưa có class cho trang này
+    }
 
-    # Login page components
-    login_username = ft.TextField(label="Username", width=300)
-    login_password = ft.TextField(label="Password", password=True, width=300)
-    login_error = ft.Text("", color=ft.colors.RED)
-    
-    # Register page components
-    register_email = ft.TextField(label="Email", width=300)
-    register_username = ft.TextField(label="Username", width=300)
-    register_password = ft.TextField(label="Password", password=True, width=300)
-    register_confirm_password = ft.TextField(label="Confirm Password", password=True, width=300)
-    register_error = ft.Text("", color=ft.colors.RED)
+    def route_change(route_event: ft.RouteChangeEvent):
+        page.views.clear()
 
-    def login_click(e):
-        try:
-            if auth.login(login_username.value, login_password.value):
-                if auth.is_admin:
-                    page.go("/admin")
-                else:
-                    page.go("/detection")
+        # Lấy Class View từ app_routes dựa trên route mới
+        # Nếu không tìm thấy, mặc định về LoginPage
+        ViewClass = app_routes.get(route_event.route, LoginPage)
+
+        # Tạo một instance của Class View đó
+        # Class View này đã kế thừa từ ft.View
+        current_view_instance = ViewClass(page) # Truyền `page` vào constructor
+        page.views.append(current_view_instance)
+
+        # Kiểm tra quyền truy cập cho các trang bảo vệ
+        current_route = page.route # Lấy route hiện tại của page
+        user_role = page.session.get("user_role")
+
+        # Nếu đang ở trang login mà đã có role, chuyển hướng phù hợp
+        if current_route == "/login" and user_role:
+            if user_role == "admin":
+                page.go("/admin")
+                return # Dừng xử lý tiếp, vì page.go sẽ trigger route_change mới
             else:
-                login_error.value = "Invalid username or password"
-                page.update()
-        except Exception as ex:
-            login_error.value = f"Login error: {str(ex)}"
-            page.update()
+                page.go("/client")
+                return # Dừng xử lý tiếp
 
-    def register_click(e):
-        if register_password.value != register_confirm_password.value:
-            register_error.value = "Passwords do not match"
-        else:
-            if auth.register(register_username.value, register_password.value):
-                page.go("/login")
-            else:
-                register_error.value = "Registration failed"
+        # Bảo vệ các trang admin và client
+        if current_route == "/admin" and user_role != "admin":
+            page.go("/login") # Điều hướng về login, route_change sẽ xử lý việc hiển thị LoginPage
+            return
+        elif current_route == "/client" and not user_role: # Chỉ cần có user_role là được vào client
+            page.go("/login")
+            return
+        # Nếu người dùng admin cố vào /client, hoặc user vào /admin (đã xử lý ở trên)
+        # hoặc các trường hợp khác không mong muốn, có thể thêm logic ở đây.
+        # Hiện tại, nếu admin vào /client thì vẫn được, và user vào /admin sẽ bị đẩy về /login.
+
         page.update()
+        
+    page.on_route_change = route_change
 
-    def logout_click(e):
-        auth.token = None
-        auth.username = None
-        auth.is_admin = False
+    # Khởi đầu ứng dụng
+    # Kiểm tra session để quyết định route ban đầu
+    initial_role = page.session.get("user_role")
+    if initial_role == "admin":
+        page.go("/admin")
+    elif initial_role: # Bất kỳ role nào khác admin (ví dụ "user")
+        page.go("/client")
+    else:
         page.go("/login")
 
-    # Login page
-    login_page = ft.View(
-        "/login",
-        [
-            ft.Column(
-                [
-                    ft.Text("Login", size=32, weight=ft.FontWeight.BOLD),
-                    ft.Divider(),
-                    login_username,
-                    login_password,
-                    login_error,
-                    ft.ElevatedButton("Login", on_click=login_click),
-                    ft.TextButton("Don't have an account? Register", on_click=lambda _: page.go("/register"))
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=20
-            )
-        ],
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        vertical_alignment=ft.MainAxisAlignment.CENTER
-    )
-
-    # Register page
-    register_page = ft.View(
-        "/register",
-        [
-            ft.Column(
-                [
-                    ft.Text("Register", size=32, weight=ft.FontWeight.BOLD),
-                    ft.Divider(),
-                    register_email,
-                    register_username,
-                    register_password,
-                    register_confirm_password,
-                    register_error,
-                    ft.ElevatedButton("Register", on_click=register_click),
-                    ft.TextButton("Already have an account? Login", on_click=lambda _: page.go("/login"))
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=20
-            )
-        ],
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        vertical_alignment=ft.MainAxisAlignment.CENTER
-    )
-
-    # Detection page components
-    def pick_files_result(e: ft.FilePickerResultEvent):
-        if e.files:
-            selected_file = e.files[0]
-            file_path = selected_file.path
-            
-            # Process the image through API
-            try:
-                # Show loading indicator
-                result_text.value = "Processing image..."
-                page.update()
-                
-                # Get file extension and content type
-                file_extension = os.path.splitext(file_path)[1].lower()
-                content_type = mimetypes.types_map.get(file_extension, 'application/octet-stream')
-                
-                # Make API request with auth header and file
-                with open(file_path, 'rb') as f:
-                    files = {
-                        'file': (
-                            os.path.basename(file_path),
-                            f,
-                            content_type
-                        )
-                    }
-                    headers = auth.get_auth_header()
-                    response = requests.post(
-                        f"{API_BASE_URL}/detect",
-                        files=files,
-                        headers=headers
-                    )
-                
-                if response.status_code == 200:
-                    results = response.json()
-                    result_text.value = results.get('response', 'No response received')
-                else:
-                    result_text.value = f"Error: {response.status_code} - {response.text}"
-                
-                # Display the image
-                img.src = file_path
-                img.visible = True
-                
-            except requests.exceptions.RequestException as ex:
-                result_text.value = f"Error connecting to API: {str(ex)}"
-            except Exception as ex:
-                result_text.value = f"Error processing image: {str(ex)}"
-            
-            page.update()
-
-    # File picker
-    file_picker = ft.FilePicker(on_result=pick_files_result)
-    page.overlay.append(file_picker)
-
-    # Detection page UI Components
-    title = ft.Text("Image Detection App", size=32, weight=ft.FontWeight.BOLD)
-    subtitle = ft.Text(f"Welcome, {auth.username}", size=16, color=ft.colors.GREY_600)
-    
-    upload_button = ft.ElevatedButton(
-        "Upload Image",
-        icon=ft.icons.UPLOAD_FILE,
-        on_click=lambda _: file_picker.pick_files(
-            allow_multiple=False,
-            file_type=ft.FilePickerFileType.IMAGE
-        )
-    )
-    
-    img = ft.Image(
-        src="",
-        width=400,
-        height=400,
-        fit=ft.ImageFit.CONTAIN,
-        visible=False
-    )
-    
-    result_text = ft.Text("", size=16, selectable=True)
-    
-    # Create a scrollable container for the results
-    result_container = ft.Column(
-        [
-            ft.Container(
-                content=result_text,
-                padding=20,
-                border_radius=10,
-                bgcolor=ft.colors.GREY_100,
-                width=400,
-                height=400,
-                alignment=ft.alignment.top_left
-            )
-        ],
-        scroll=ft.ScrollMode.AUTO,
-        height=400
-    )
-    
-    # Detection page
-    detection_page = ft.View(
-        "/detection",
-        [
-            ft.Column(
-                [
-                    ft.Row(
-                        [
-                            title,
-                            ft.ElevatedButton("Logout", on_click=logout_click)
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-                    ),
-                    subtitle,
-                    ft.Divider(),
-                    upload_button,
-                    ft.Row(
-                        [
-                            img,
-                            result_container
-                        ],
-                        spacing=20,
-                        alignment=ft.MainAxisAlignment.CENTER
-                    )
-                ],
-                spacing=20,
-                alignment=ft.MainAxisAlignment.START,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                scroll=ft.ScrollMode.AUTO
-            )
-        ],
-        scroll=ft.ScrollMode.AUTO
-    )
-
-    def route_change(e):
-        page.views.clear()
-        if not auth.is_authenticated() and e.route != "/register":
-            page.views.append(login_page)
-        elif e.route == "/register":
-            page.views.append(register_page)
-        elif e.route == "/admin" and auth.is_admin:
-            # Create admin page
-            admin_page = AdminPage(page, auth.token)
-            page.views.append(admin_page)
-        else:
-            page.views.append(detection_page)
-        page.update()
-
-    def view_pop(e):
-        page.views.pop()
-        top_view = page.views[-1]
-        page.go(top_view.route)
-
-    page.on_route_change = route_change
-    page.on_view_pop = view_pop
-
-    # Start with login page
-    page.go("/login")
-
 if __name__ == "__main__":
-    ft.app(target=main) 
+    # ft.app(target=main, view=ft.AppView.FLET_APP_WEB)
+    ft.app(target=main) # Cho desktop

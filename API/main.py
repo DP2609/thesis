@@ -119,7 +119,7 @@ async def login_for_access_token(
     db: Session = Depends(get_db)
 ):
     # Try to find user by email first
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    user = db.query(models.User).filter(models.User.email == form_data.username or models.User.username == form_data.username).first()
     # If not found by email, try username
     if not user:
         user = db.query(models.User).filter(models.User.username == form_data.username).first()

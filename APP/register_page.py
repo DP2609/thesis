@@ -119,7 +119,7 @@ class RegisterPage(ft.View):
                 }
             )
             
-            if response.status_code == 201:
+            if response.status_code == 200 or response.status_code == 201:
                 self.success_text.value = "Đăng ký thành công! Vui lòng đăng nhập."
                 self.error_text.value = ""
                 self.page.update()

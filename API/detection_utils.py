@@ -20,7 +20,9 @@ class ImageDetector:
             print("Loading model...")
             # Register the KerasLayer custom object
             custom_objects = {
-                'KerasLayer': hub.KerasLayer
+                'KerasLayer': hub.KerasLayer,
+                'TFHubKerasLayer': hub.KerasLayer,
+                'TensorFlowHubKerasLayer': hub.KerasLayer
             }
             
             # Load the model with custom objects

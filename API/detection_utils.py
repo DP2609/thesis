@@ -7,6 +7,9 @@ import time
 import os
 from typing import Tuple, List, Dict, Any
 
+# Use TensorFlow's built-in keras instead of tf-keras
+keras = tf.keras
+
 class ImageDetector:
     
     def __init__(self, model_path: str):
@@ -18,17 +21,40 @@ class ImageDetector:
             
         try:
             print("Loading model...")
-            # Register the KerasLayer custom object
-            custom_objects = {
-                'KerasLayer': hub.KerasLayer
-            }
-            
-            # Load the model with custom objects
-            with tf.keras.utils.custom_object_scope(custom_objects):
-                self.model = tf.keras.models.load_model(model_path)
-            
-            print("Model loaded successfully")
-            
+            try:
+                # First try loading directly with proper signatures
+                self.model = keras.models.load_model(model_path, custom_objects={
+                    'KerasLayer': hub.KerasLayer,
+                    'keras_layer': hub.KerasLayer
+                })
+                print("Model loaded successfully with direct loading")
+            except Exception as load_error:
+                print(f"Direct loading failed, trying alternative approach: {str(load_error)}")
+                # If that fails, try recreating the model with compatible layer
+                hub_url = "https://www.kaggle.com/models/google/mobilenet-v2/TensorFlow2/035-128-classification/2"
+                
+                # Create the model using Keras functional API
+                inputs = keras.layers.Input(shape=(224, 224, 3))
+                hub_layer = hub.KerasLayer(hub_url, trainable=False, output_shape=[1280])
+                features = hub_layer(inputs)
+                outputs = keras.layers.Dense(1000, activation='softmax')(features)
+                
+                self.model = keras.Model(inputs, outputs)
+                
+                # Try to load weights
+                try:
+                    self.model.load_weights(model_path)
+                    print("Weights loaded successfully")
+                except Exception as weight_error:
+                    print(f"Weight loading failed: {str(weight_error)}")
+                    # Initialize from scratch if weight loading fails
+                    self.model.compile(
+                        optimizer='adam',
+                        loss='sparse_categorical_crossentropy',
+                        metrics=['accuracy']
+                    )
+                print("Model created successfully with alternative approach")
+                
             # Print model summary
             print("\nModel Summary:")
             self.model.summary()
@@ -65,7 +91,7 @@ class ImageDetector:
             print(f"Resized image to {self.image_size}")
             
             # Convert to numpy array and preprocess
-            img_array = tf.keras.preprocessing.image.img_to_array(image)
+            img_array = keras.preprocessing.image.img_to_array(image)
             img_array = np.expand_dims(img_array, axis=0)
             img_array = img_array / 255.0  # Normalize
             
@@ -148,4 +174,4 @@ def get_detector() -> ImageDetector:
     """Get the initialized detector."""
     if detector is None:
         raise Exception("Detector not initialized. Please make sure the model file exists and is valid.")
-    return detector 
+    return detector

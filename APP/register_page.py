@@ -1,3 +1,4 @@
+import time
 import flet as ft
 import requests
 
@@ -119,12 +120,15 @@ class RegisterPage(ft.View):
                 }
             )
             
+            print(response.status_code)
+            
             if response.status_code == 200 or response.status_code == 201:
                 self.success_text.value = "Đăng ký thành công! Vui lòng đăng nhập."
                 self.error_text.value = ""
                 self.page.update()
                 # Redirect to login page after a short delay
-                self.page.set_timeout(2000, lambda _: self.page.go("/login"))
+                time.sleep(2)
+                self.page.go("/login")
             else:
                 self.error_text.value = "Đăng ký thất bại. Tên đăng nhập hoặc email đã tồn tại."
         except Exception as ex:
